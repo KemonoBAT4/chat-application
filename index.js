@@ -1,48 +1,59 @@
 const express = require('express');
-const http = require('http');
+const http    = require('http');
 const socketIO = require('socket.io');
 
-const app = express();
+const app    = express();
 const server = http.createServer(app);
-const io = socketIO(server);
+const io     = socketIO(server);
 
-// Store connected users
-const users = new Set();
+// username → socket map
+const users = new Map(); // socket.id → username
 
-// Socket.io connection event
 io.on('connection', (socket) => {
-  console.log('A user connected');
+  console.log('Nuova connessione:', socket.id);
 
-  // Add the new user to the users set
-  users.add(socket.id);
+  // ── Set username ──
+  socket.on('setUsername', (rawName) => {
+    const username = String(rawName).trim().slice(0, 20) || 'Anonimo';
 
-  // Notify all users about the new user count
-  io.emit('userCount', users.size);
+    // Evita username duplicati
+    const taken = [...users.values()].includes(username);
+    const finalName = taken ? `${username}_${socket.id.slice(0,3)}` : username;
 
-  // Listen for chat messages
-  socket.on('chatMessage', (message) => {
-    // Broadcast the message to all connected users
-    io.emit('chatMessage', message);
+    users.set(socket.id, finalName);
+    console.log(`${finalName} è entrato`);
+
+    // Notifica tutti che qualcuno è entrato
+    io.emit('systemMessage', { text: `${finalName} è entrato nella stanza` });
+    io.emit('userCount', users.size);
   });
 
-  // Socket.io disconnect event
+  // ── Chat message ──
+  socket.on('chatMessage', (text) => {
+    const username = users.get(socket.id) || 'Anonimo';
+    const safeText = String(text).trim().slice(0, 500);
+    if (!safeText) return;
+
+    const now  = new Date();
+    const time = now.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+
+    io.emit('chatMessage', { username, text: safeText, time });
+  });
+
+  // ── Disconnect ──
   socket.on('disconnect', () => {
-    console.log('A user disconnected');
-
-    // Remove the user from the users set
+    const username = users.get(socket.id) || 'Qualcuno';
     users.delete(socket.id);
+    console.log(`${username} ha lasciato la stanza`);
 
-    // Notify all users about the updated user count
+    io.emit('systemMessage', { text: `${username} ha lasciato la stanza` });
     io.emit('userCount', users.size);
   });
 });
 
 const PORT = process.env.PORT || 3000;
-
-// Serve static files from the "public" folder
 app.use(express.static('public'));
 
-// Start the server
 server.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
+  console.log(`Server in ascolto su http://localhost:${PORT}`);
 });
